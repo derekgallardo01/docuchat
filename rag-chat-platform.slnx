@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/api/">
+    <Project Path="api/RagChat.Api/RagChat.Api.csproj" />
+    <Project Path="api/RagChat.Tests/RagChat.Tests.csproj" />
+  </Folder>
+</Solution>

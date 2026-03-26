@@ -1,0 +1,26 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.vs/
+appsettings.Development.json
+
+# Node
+node_modules/
+ui/build/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.pfx
+*.key
+secrets.json
+.env
+.env.*
