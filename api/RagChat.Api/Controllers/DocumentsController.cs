@@ -63,6 +63,16 @@ public class DocumentsController(
             doc.FileSizeBytes, doc.ChunkCount, doc.Status, doc.CreatedAt));
     }
 
+    [HttpGet("{id:guid}/chunks")]
+    public async Task<ActionResult<List<DocumentChunk>>> GetChunks(Guid id)
+    {
+        var doc = await documentRepo.GetByIdAsync(id);
+        if (doc is null) return NotFound();
+
+        var chunks = await documentRepo.GetChunksByDocumentIdAsync(id);
+        return Ok(chunks);
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {

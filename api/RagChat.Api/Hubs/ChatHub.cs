@@ -15,31 +15,37 @@ public class ChatHub(
         try
         {
             // Ensure conversation exists
+            await Clients.Caller.SendAsync("ReceiveStatus", new ChatStreamStatus("Creating conversation..."));
             var conversationId = await chatService.EnsureConversationAsync(request.ConversationId, request.Message);
 
             // Save user message
             await messageRepo.CreateAsync(conversationId, "user", request.Message);
 
-            // Retrieve context for sources
+            // Retrieve context
+            await Clients.Caller.SendAsync("ReceiveStatus", new ChatStreamStatus("Searching documents..."));
             var sources = await chatService.RetrieveContextAsync(request.Message);
 
             // Stream response tokens
+            await Clients.Caller.SendAsync("ReceiveStatus", new ChatStreamStatus("Generating response..."));
             var fullResponse = new System.Text.StringBuilder();
+            var tokenCount = 0;
 
             await foreach (var token in chatService.StreamResponseAsync(conversationId, request.Message))
             {
                 fullResponse.Append(token);
+                tokenCount++;
                 await Clients.Caller.SendAsync("ReceiveToken", new ChatStreamToken(token));
             }
 
             // Finalize and save
             var (message, messageSources) = await chatService.FinalizeResponseAsync(
-                conversationId, fullResponse.ToString(), sources);
+                conversationId, fullResponse.ToString(), sources, tokenCount);
 
             await Clients.Caller.SendAsync("ReceiveComplete", new ChatStreamComplete(
                 conversationId,
                 message.Id,
-                messageSources.Select(s => new SourceDto(s.FileName, s.Content, s.RelevanceScore)).ToList()));
+                messageSources.Select(s => new SourceDto(s.FileName, s.Content, s.RelevanceScore)).ToList(),
+                tokenCount));
         }
         catch (Exception ex)
         {

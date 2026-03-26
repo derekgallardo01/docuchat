@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Document } from '../types';
-import { getDocuments, uploadDocument, deleteDocument, getDocument } from '../api';
+import { Document, DocumentStatusUpdate } from '../types';
+import { getDocuments, uploadDocument, deleteDocument } from '../api';
+import { ensureConnected, onDocumentStatus } from '../chatConnection';
 
 interface DocumentsPanelProps {
   onClose: () => void;
@@ -10,6 +11,7 @@ interface DocumentsPanelProps {
 export default function DocumentsPanel({ onClose }: DocumentsPanelProps) {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [processingDetails, setProcessingDetails] = useState<Record<string, DocumentStatusUpdate>>({});
 
   const loadDocuments = useCallback(async () => {
     const docs = await getDocuments();
@@ -20,23 +22,18 @@ export default function DocumentsPanel({ onClose }: DocumentsPanelProps) {
     loadDocuments();
   }, [loadDocuments]);
 
-  // Poll for processing status
+  // Real-time document processing via SignalR
   useEffect(() => {
-    const processing = documents.filter(d => d.status === 'Pending' || d.status === 'Processing');
-    if (processing.length === 0) return;
+    ensureConnected();
+    const unsubscribe = onDocumentStatus((update: DocumentStatusUpdate) => {
+      setProcessingDetails((prev) => ({ ...prev, [update.documentId]: update }));
 
-    const interval = setInterval(async () => {
-      const updated = await Promise.all(
-        processing.map(d => getDocument(d.id))
-      );
-      setDocuments(prev => prev.map(d => {
-        const u = updated.find(x => x.id === d.id);
-        return u || d;
-      }));
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [documents]);
+      if (update.status === 'Ready' || update.status === 'Failed') {
+        loadDocuments();
+      }
+    });
+    return unsubscribe;
+  }, [loadDocuments]);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     setUploading(true);
@@ -63,7 +60,7 @@ export default function DocumentsPanel({ onClose }: DocumentsPanelProps) {
 
   const handleDelete = async (id: string) => {
     await deleteDocument(id);
-    setDocuments(prev => prev.filter(d => d.id !== id));
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
   };
 
   const formatSize = (bytes: number) => {
@@ -72,17 +69,29 @@ export default function DocumentsPanel({ onClose }: DocumentsPanelProps) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const statusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      Pending: '#f59e0b',
-      Processing: '#3b82f6',
-      Ready: '#10b981',
-      Failed: '#ef4444',
-    };
+  const statusColor: Record<string, string> = {
+    Pending: '#f59e0b',
+    Processing: '#3b82f6',
+    Ready: '#10b981',
+    Failed: '#ef4444',
+  };
+
+  const renderProgress = (doc: Document) => {
+    const detail = processingDetails[doc.id];
+    if (!detail || doc.status === 'Ready') return null;
+
     return (
-      <span className="status-badge" style={{ backgroundColor: colors[status] || '#6b7280' }}>
-        {status}
-      </span>
+      <div className="processing-progress">
+        <div className="progress-text">{detail.detail}</div>
+        {detail.total && detail.total > 0 && (
+          <div className="progress-bar-container">
+            <div
+              className="progress-bar-fill"
+              style={{ width: `${((detail.progress || 0) / detail.total) * 100}%` }}
+            />
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -100,7 +109,12 @@ export default function DocumentsPanel({ onClose }: DocumentsPanelProps) {
         ) : isDragActive ? (
           <p>Drop files here...</p>
         ) : (
-          <p>Drag & drop PDF, DOCX, or TXT files here, or click to browse</p>
+          <>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginBottom: 8 }}>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+            </svg>
+            <p>Drag & drop PDF, DOCX, or TXT files here, or click to browse</p>
+          </>
         )}
       </div>
 
@@ -110,8 +124,12 @@ export default function DocumentsPanel({ onClose }: DocumentsPanelProps) {
             <div className="document-info">
               <span className="document-name">{doc.fileName}</span>
               <span className="document-meta">
-                {formatSize(doc.fileSizeBytes)} &bull; {doc.chunkCount} chunks &bull; {statusBadge(doc.status)}
+                {formatSize(doc.fileSizeBytes)} &bull; {doc.chunkCount} chunks &bull;{' '}
+                <span className="status-badge" style={{ backgroundColor: statusColor[doc.status] || '#6b7280' }}>
+                  {doc.status}
+                </span>
               </span>
+              {renderProgress(doc)}
             </div>
             <button className="btn-delete" onClick={() => handleDelete(doc.id)} title="Delete">
               &times;

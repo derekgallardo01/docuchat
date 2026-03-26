@@ -12,6 +12,7 @@ public interface IDocumentRepository
     Task UpdateStatusAsync(Guid id, string status, string? errorMessage = null);
     Task UpdateChunkCountAsync(Guid id, int chunkCount);
     Task AddChunksAsync(List<DocumentChunk> chunks);
+    Task<List<DocumentChunk>> GetChunksByDocumentIdAsync(Guid documentId);
     Task DeleteAsync(Guid id);
 }
 
@@ -78,6 +79,15 @@ public class DocumentRepository(SqlSettings sqlSettings) : IDocumentRepository
             INSERT INTO DocumentChunks (Id, DocumentId, ChunkIndex, Content, TokenCount, SearchDocumentId, CreatedAt)
             VALUES (@Id, @DocumentId, @ChunkIndex, @Content, @TokenCount, @SearchDocumentId, SYSUTCDATETIME())
             """, chunks);
+    }
+
+    public async Task<List<DocumentChunk>> GetChunksByDocumentIdAsync(Guid documentId)
+    {
+        using var conn = new SqlConnection(sqlSettings.ConnectionString);
+        var results = await conn.QueryAsync<DocumentChunk>(
+            "SELECT * FROM DocumentChunks WHERE DocumentId = @DocumentId ORDER BY ChunkIndex",
+            new { DocumentId = documentId });
+        return results.ToList();
     }
 
     public async Task DeleteAsync(Guid id)

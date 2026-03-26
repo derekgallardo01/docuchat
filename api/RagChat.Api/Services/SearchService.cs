@@ -11,7 +11,7 @@ public interface ISearchService
 {
     Task EnsureIndexAsync(CancellationToken ct = default);
     Task IndexChunksAsync(List<SearchChunkDocument> chunks, CancellationToken ct = default);
-    Task<List<SearchResult>> SearchAsync(float[] queryEmbedding, int topK = 5, CancellationToken ct = default);
+    Task<List<SearchResult>> SearchAsync(string queryText, float[] queryEmbedding, int topK = 5, CancellationToken ct = default);
     Task DeleteDocumentChunksAsync(Guid documentId, CancellationToken ct = default);
 }
 
@@ -90,7 +90,7 @@ public class SearchService : ISearchService
         await _searchClient.IndexDocumentsAsync(batch, cancellationToken: ct);
     }
 
-    public async Task<List<SearchResult>> SearchAsync(float[] queryEmbedding, int topK = 5, CancellationToken ct = default)
+    public async Task<List<SearchResult>> SearchAsync(string queryText, float[] queryEmbedding, int topK = 5, CancellationToken ct = default)
     {
         var searchOptions = new SearchOptions
         {
@@ -105,7 +105,8 @@ public class SearchService : ISearchService
             Select = { "documentId", "chunkId", "fileName", "content" }
         };
 
-        var response = await _searchClient.SearchAsync<Azure.Search.Documents.Models.SearchDocument>(null, searchOptions, ct);
+        // Hybrid search: combine vector similarity with BM25 keyword matching via RRF
+        var response = await _searchClient.SearchAsync<Azure.Search.Documents.Models.SearchDocument>(queryText, searchOptions, ct);
         var results = new List<SearchResult>();
 
         await foreach (var result in response.Value.GetResultsAsync())

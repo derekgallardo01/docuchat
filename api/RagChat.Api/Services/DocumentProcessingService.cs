@@ -1,5 +1,7 @@
 using DocumentFormat.OpenXml.Packaging;
+using Microsoft.AspNetCore.SignalR;
 using UglyToad.PdfPig;
+using RagChat.Api.Hubs;
 using RagChat.Api.Models;
 using RagChat.Api.Repositories;
 
@@ -15,6 +17,7 @@ public class DocumentProcessingService(
     IBlobStorageService blobService,
     IOpenAIService openAIService,
     ISearchService searchService,
+    IHubContext<ChatHub> hubContext,
     ILogger<DocumentProcessingService> logger) : IDocumentProcessingService
 {
     private const int MaxChunkTokens = 500;
@@ -27,7 +30,7 @@ public class DocumentProcessingService(
 
         try
         {
-            await documentRepo.UpdateStatusAsync(documentId, "Processing");
+            await UpdateStatus(documentId, "Processing", "Downloading document...");
 
             // 1. Download from blob
             using var stream = await blobService.DownloadAsync(document.BlobUri, ct);
@@ -36,6 +39,7 @@ public class DocumentProcessingService(
             memoryStream.Position = 0;
 
             // 2. Extract text
+            await UpdateStatus(documentId, "Processing", "Extracting text...");
             var text = document.ContentType switch
             {
                 "application/pdf" => ExtractPdfText(memoryStream),
@@ -48,12 +52,15 @@ public class DocumentProcessingService(
                 throw new InvalidOperationException("No text could be extracted from the document.");
 
             // 3. Chunk the text
+            await UpdateStatus(documentId, "Processing", "Chunking text...");
             var textChunks = ChunkText(text);
 
             // 4. Generate embeddings
+            await UpdateStatus(documentId, "Processing", "Generating embeddings...", 0, textChunks.Count);
             var embeddings = await openAIService.GetEmbeddingsAsync(textChunks, ct);
 
             // 5. Create chunk records and index in search
+            await UpdateStatus(documentId, "Processing", "Indexing in search...", textChunks.Count, textChunks.Count);
             var chunks = new List<DocumentChunk>();
             var searchDocs = new List<SearchChunkDocument>();
 
@@ -90,13 +97,21 @@ public class DocumentProcessingService(
             await documentRepo.UpdateChunkCountAsync(documentId, chunks.Count);
             await documentRepo.UpdateStatusAsync(documentId, "Ready");
 
+            await UpdateStatus(documentId, "Ready", $"Complete — {chunks.Count} chunks", chunks.Count, chunks.Count);
             logger.LogInformation("Processed document {DocumentId}: {ChunkCount} chunks", documentId, chunks.Count);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to process document {DocumentId}", documentId);
             await documentRepo.UpdateStatusAsync(documentId, "Failed", ex.Message);
+            await UpdateStatus(documentId, "Failed", ex.Message);
         }
+    }
+
+    private async Task UpdateStatus(Guid documentId, string status, string detail, int? progress = null, int? total = null)
+    {
+        await hubContext.Clients.All.SendAsync("DocumentStatusChanged",
+            new DocumentStatusUpdate(documentId, status, detail, progress, total));
     }
 
     private static string ExtractPdfText(Stream stream)
@@ -115,7 +130,7 @@ public class DocumentProcessingService(
     {
         var words = text.Split([' ', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries);
         var chunks = new List<string>();
-        var chunkSize = (int)(MaxChunkTokens * 0.75); // rough word-to-token ratio
+        var chunkSize = (int)(MaxChunkTokens * 0.75);
         var overlap = (int)(ChunkOverlapTokens * 0.75);
 
         for (int i = 0; i < words.Length; i += chunkSize - overlap)

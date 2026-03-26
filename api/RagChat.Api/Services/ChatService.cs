@@ -8,7 +8,7 @@ public interface IChatService
     Task<Guid> EnsureConversationAsync(Guid? conversationId, string firstMessage);
     IAsyncEnumerable<string> StreamResponseAsync(Guid conversationId, string userMessage, CancellationToken ct = default);
     Task<(ChatMessage Message, List<MessageSource> Sources)> FinalizeResponseAsync(
-        Guid conversationId, string fullResponse, List<SearchResult> sources, CancellationToken ct = default);
+        Guid conversationId, string fullResponse, List<SearchResult> sources, int? tokensUsed = null, CancellationToken ct = default);
     Task<List<SearchResult>> RetrieveContextAsync(string query, CancellationToken ct = default);
 }
 
@@ -44,7 +44,7 @@ public class ChatService(
     public async Task<List<SearchResult>> RetrieveContextAsync(string query, CancellationToken ct = default)
     {
         var embedding = await openAIService.GetEmbeddingAsync(query, ct);
-        return await searchService.SearchAsync(embedding, topK: 5, ct);
+        return await searchService.SearchAsync(query, embedding, topK: 5, ct);
     }
 
     public async IAsyncEnumerable<string> StreamResponseAsync(
@@ -77,18 +77,18 @@ public class ChatService(
     }
 
     public async Task<(ChatMessage Message, List<MessageSource> Sources)> FinalizeResponseAsync(
-        Guid conversationId, string fullResponse, List<SearchResult> sources, CancellationToken ct = default)
+        Guid conversationId, string fullResponse, List<SearchResult> sources, int? tokensUsed = null, CancellationToken ct = default)
     {
-        // Save assistant message
-        var message = await messageRepo.CreateAsync(conversationId, "assistant", fullResponse);
+        // Save assistant message with token count
+        var message = await messageRepo.CreateAsync(conversationId, "assistant", fullResponse, tokensUsed);
 
-        // Save sources
+        // Save sources — keep full content for expandable citations
         var messageSources = sources.Select(s => new MessageSource
         {
             DocumentId = s.DocumentId,
             ChunkId = s.ChunkId,
             FileName = s.FileName,
-            Content = s.Content.Length > 200 ? s.Content[..200] + "..." : s.Content,
+            Content = s.Content,
             RelevanceScore = s.Score
         }).ToList();
 

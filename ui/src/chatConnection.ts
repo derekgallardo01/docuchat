@@ -1,5 +1,5 @@
 import * as signalR from '@microsoft/signalr';
-import { ChatStreamComplete, ChatStreamToken } from './types';
+import { ChatStreamComplete, ChatStreamStatus, ChatStreamToken, DocumentStatusUpdate } from './types';
 
 const HUB_URL = process.env.REACT_APP_API_URL
   ? `${process.env.REACT_APP_API_URL}/hubs/chat`
@@ -30,28 +30,39 @@ export async function sendMessage(
   conversationId: string | null,
   onToken: (data: ChatStreamToken) => void,
   onComplete: (data: ChatStreamComplete) => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  onStatus?: (data: ChatStreamStatus) => void
 ): Promise<void> {
   const conn = await ensureConnected();
 
-  // Set up one-time handlers
   const tokenHandler = (data: ChatStreamToken) => onToken(data);
+  const statusHandler = (data: ChatStreamStatus) => onStatus?.(data);
   const completeHandler = (data: ChatStreamComplete) => {
-    conn.off('ReceiveToken', tokenHandler);
-    conn.off('ReceiveComplete', completeHandler);
-    conn.off('ReceiveError', errorHandler);
+    cleanup();
     onComplete(data);
   };
   const errorHandler = (error: string) => {
-    conn.off('ReceiveToken', tokenHandler);
-    conn.off('ReceiveComplete', completeHandler);
-    conn.off('ReceiveError', errorHandler);
+    cleanup();
     onError(error);
   };
 
+  const cleanup = () => {
+    conn.off('ReceiveToken', tokenHandler);
+    conn.off('ReceiveStatus', statusHandler);
+    conn.off('ReceiveComplete', completeHandler);
+    conn.off('ReceiveError', errorHandler);
+  };
+
   conn.on('ReceiveToken', tokenHandler);
+  conn.on('ReceiveStatus', statusHandler);
   conn.on('ReceiveComplete', completeHandler);
   conn.on('ReceiveError', errorHandler);
 
   await conn.invoke('SendMessage', { message, conversationId });
+}
+
+export function onDocumentStatus(handler: (data: DocumentStatusUpdate) => void): () => void {
+  const conn = getConnection();
+  conn.on('DocumentStatusChanged', handler);
+  return () => conn.off('DocumentStatusChanged', handler);
 }
