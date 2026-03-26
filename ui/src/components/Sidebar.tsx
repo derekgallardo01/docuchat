@@ -48,7 +48,7 @@ export default function Sidebar({
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <h1>RAG Chat</h1>
+        <h1>DocuChat</h1>
         <button className="btn-theme" onClick={onToggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
           {theme === 'dark' ? '\u2600' : '\u263E'}
         </button>

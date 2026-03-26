@@ -185,7 +185,7 @@ export default function ChatPanel({
                 <path d="M8 10h8M8 14h4" />
               </svg>
             </div>
-            <h2>RAG Chat</h2>
+            <h2>DocuChat</h2>
             <p>Upload documents and ask questions about them.</p>
           </div>
         )}
