@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -17,36 +17,43 @@ interface ChatPanelProps {
   onViewDocument?: (documentId: string, fileName: string, chunkId?: string) => void;
 }
 
+// Local-only message appended during/after streaming
+interface LocalAssistantMessage {
+  content: string;
+  sources: Source[];
+  tokensUsed: number;
+  done: boolean;
+}
+
 export default function ChatPanel({
   conversationId, conversationTitle, messages, onConversationCreated, onMessageSent, onViewDocument
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingContent, setStreamingContent] = useState('');
-  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
-  const [completedResponse, setCompletedResponse] = useState<{ content: string; sources: Source[]; tokensUsed: number } | null>(null);
+  const [localUserMessage, setLocalUserMessage] = useState<string | null>(null);
+  const [localAssistant, setLocalAssistant] = useState<LocalAssistantMessage | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const prevMessagesLenRef = useRef(messages.length);
 
+  // Scroll to bottom on new content
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent, pendingUserMessage, statusMessage]);
+  }, [messages, localAssistant?.content, localUserMessage, statusMessage]);
 
-  // Clear local state when server messages catch up
+  // When server messages update and include the assistant reply, clear local state
   useEffect(() => {
-    if (!isStreaming && pendingUserMessage && messages.length > 0) {
+    if (localUserMessage && messages.length > prevMessagesLenRef.current) {
+      // Server caught up — check if the latest message is the assistant reply
       const lastMsg = messages[messages.length - 1];
-      if (lastMsg.role === 'assistant') {
-        // Batch all local state clears together to avoid intermediate renders
-        requestAnimationFrame(() => {
-          setPendingUserMessage(null);
-          setCompletedResponse(null);
-          setStreamingContent('');
-        });
+      if (lastMsg?.role === 'assistant') {
+        setLocalUserMessage(null);
+        setLocalAssistant(null);
       }
     }
-  }, [messages, isStreaming, pendingUserMessage]);
+    prevMessagesLenRef.current = messages.length;
+  }, [messages, localUserMessage]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -56,15 +63,14 @@ export default function ChatPanel({
     }
   }, [input]);
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!input.trim() || isStreaming) return;
 
     const userMessage = input.trim();
     setInput('');
     setIsStreaming(true);
-    setStreamingContent('');
-    setPendingUserMessage(userMessage);
-    setCompletedResponse(null);
+    setLocalUserMessage(userMessage);
+    setLocalAssistant({ content: '', sources: [], tokensUsed: 0, done: false });
     setStatusMessage(null);
 
     try {
@@ -73,26 +79,29 @@ export default function ChatPanel({
         conversationId,
         (token) => {
           setStatusMessage(null);
-          setStreamingContent((prev) => prev + token.token);
+          setLocalAssistant((prev) => prev ? { ...prev, content: prev.content + token.token } : prev);
         },
         (complete) => {
-          // Keep streamingContent visible — don't clear it
-          setCompletedResponse({ content: '', sources: complete.sources, tokensUsed: complete.tokensUsed });
+          setLocalAssistant((prev) => prev ? {
+            ...prev,
+            sources: complete.sources,
+            tokensUsed: complete.tokensUsed,
+            done: true,
+          } : prev);
           setIsStreaming(false);
           setStatusMessage(null);
-          // Delay server sync so local state stays visible without flicker
-          setTimeout(() => {
-            if (!conversationId) {
-              onConversationCreated(complete.conversationId);
-            } else {
-              onMessageSent();
-            }
-          }, 100);
+          // Notify parent to refresh sidebar + load server messages
+          if (!conversationId) {
+            onConversationCreated(complete.conversationId);
+          } else {
+            onMessageSent();
+          }
         },
         (error) => {
           console.error('Chat error:', error);
           setIsStreaming(false);
-          setPendingUserMessage(null);
+          setLocalUserMessage(null);
+          setLocalAssistant(null);
           setStatusMessage(null);
         },
         (status) => {
@@ -102,10 +111,11 @@ export default function ChatPanel({
     } catch (err) {
       console.error('Failed to send message:', err);
       setIsStreaming(false);
-      setPendingUserMessage(null);
+      setLocalUserMessage(null);
+      setLocalAssistant(null);
       setStatusMessage(null);
     }
-  };
+  }, [input, isStreaming, conversationId, onConversationCreated, onMessageSent]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -146,22 +156,10 @@ export default function ChatPanel({
     );
   };
 
-  const renderMessage = (msg: ChatMessage) => (
-    <div key={msg.id} className={`message ${msg.role} fade-in`}>
-      <div className="message-header">
-        <span className="message-role">{msg.role === 'user' ? 'You' : 'Assistant'}</span>
-        {msg.role === 'assistant' && msg.tokensUsed && (
-          <span className="token-badge">{msg.tokensUsed} tokens</span>
-        )}
-      </div>
-      <div className="message-content">
-        {msg.role === 'assistant' ? renderMarkdown(msg.content) : <p>{msg.content}</p>}
-      </div>
-      {renderSources(msg.sources)}
-    </div>
-  );
+  // Build the display list: server messages, then local messages (if not yet synced)
+  const hasLocalMessages = localUserMessage !== null;
 
-  const showEmptyState = messages.length === 0 && !pendingUserMessage && !isStreaming;
+  const showEmptyState = messages.length === 0 && !hasLocalMessages;
 
   return (
     <div className="chat-panel">
@@ -192,20 +190,36 @@ export default function ChatPanel({
           </div>
         )}
 
-        {messages.map(renderMessage)}
+        {/* Server messages */}
+        {messages.map((msg) => (
+          <div key={msg.id} className={`message ${msg.role}`}>
+            <div className="message-header">
+              <span className="message-role">{msg.role === 'user' ? 'You' : 'Assistant'}</span>
+              {msg.role === 'assistant' && msg.tokensUsed != null && msg.tokensUsed > 0 && (
+                <span className="token-badge">{msg.tokensUsed} tokens</span>
+              )}
+            </div>
+            <div className="message-content">
+              {msg.role === 'assistant' ? renderMarkdown(msg.content) : <p>{msg.content}</p>}
+            </div>
+            {renderSources(msg.sources)}
+          </div>
+        ))}
 
-        {pendingUserMessage && (
+        {/* Local user message (not yet in server messages) */}
+        {hasLocalMessages && (
           <div className="message user fade-in">
             <div className="message-header">
               <span className="message-role">You</span>
             </div>
             <div className="message-content">
-              <p>{pendingUserMessage}</p>
+              <p>{localUserMessage}</p>
             </div>
           </div>
         )}
 
-        {isStreaming && statusMessage && !streamingContent && (
+        {/* Typing indicator */}
+        {isStreaming && statusMessage && !localAssistant?.content && (
           <div className="message assistant fade-in">
             <div className="message-header">
               <span className="message-role">Assistant</span>
@@ -214,30 +228,20 @@ export default function ChatPanel({
           </div>
         )}
 
-        {isStreaming && streamingContent && (
+        {/* Streaming / completed local assistant message */}
+        {hasLocalMessages && localAssistant && localAssistant.content && (
           <div className="message assistant fade-in">
             <div className="message-header">
               <span className="message-role">Assistant</span>
-            </div>
-            <div className="message-content">
-              {renderMarkdown(streamingContent)}
-              <span className="cursor-blink">|</span>
-            </div>
-          </div>
-        )}
-
-        {completedResponse && !isStreaming && streamingContent && (
-          <div className="message assistant fade-in">
-            <div className="message-header">
-              <span className="message-role">Assistant</span>
-              {completedResponse.tokensUsed > 0 && (
-                <span className="token-badge">{completedResponse.tokensUsed} tokens</span>
+              {localAssistant.done && localAssistant.tokensUsed > 0 && (
+                <span className="token-badge">{localAssistant.tokensUsed} tokens</span>
               )}
             </div>
             <div className="message-content">
-              {renderMarkdown(streamingContent)}
+              {renderMarkdown(localAssistant.content)}
+              {!localAssistant.done && <span className="cursor-blink">|</span>}
             </div>
-            {renderSources(completedResponse.sources)}
+            {localAssistant.done && renderSources(localAssistant.sources)}
           </div>
         )}
 
