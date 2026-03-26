@@ -1,0 +1,26 @@
+{
+  "name": "docuchat",
+  "version": "1.0.0",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/derekgallardo01/docuchat.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/derekgallardo01/docuchat/issues"
+  },
+  "homepage": "https://github.com/derekgallardo01/docuchat#readme",
+  "description": "",
+  "dependencies": {
+    "puppeteer": "^24.40.0"
+  }
+}
