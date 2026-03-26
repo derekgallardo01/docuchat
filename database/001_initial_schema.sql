@@ -1,5 +1,5 @@
--- RAG Chat Platform - Initial Schema
--- Run against: rg-operations-tracker-server-2.database.windows.net / rag-chat-platform-db
+-- DocuChat Platform - Initial Schema
+-- Run against: rg-operations-tracker-server-2.database.windows.net / docuchat-db
 
 -- Conversations
 CREATE TABLE Conversations (
